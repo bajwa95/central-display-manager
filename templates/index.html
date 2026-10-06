@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Slideshow</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+        }
+
+        #slideshow {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #slideshow img,
+        #slideshow video {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transform: translate(-50%, -50%);
+        }
+
+        /* Start with image visible, video hidden */
+        #slideImage {
+            opacity: 1;
+            transition: opacity 1s;
+        }
+
+        #slideVideo {
+            display: none;
+        }
+    </style>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+</head>
+
+<body>
+    <div id="slideshow" style="background: url('{{ url_for('image', page=page, filename=" background.jpg") }}') center
+        center / cover no-repeat;">
+        <!-- Single image + video; JS will switch between them -->
+        <img id="slideImage" alt="Slide">
+        <video id="slideVideo" muted playsinline autoplay></video>
+    </div>
+
+    <script>
+        const socket = io();
+
+        const slideshow = document.getElementById('slideshow');
+        const imgEl = document.getElementById('slideImage');
+        const vidEl = document.getElementById('slideVideo');
+
+        let slides = [];
+        let currentSlide = 0;
+        let slideTimer = null;
+        let isVideoPlaying = false;
+        let currentMedia = null;
+
+        function getPageName() {
+            // "/screen1" -> "screen1"
+            return window.location.pathname.replace(/^\/+|\/+$/g, '');
+        }
+        // ======================================================
+        // DISPLAY REGISTRATION + HEARTBEAT
+        // ======================================================
+
+        socket.on('connect', () => {
+            const screen = getPageName();
+
+            console.log('Registering display:', screen);
+
+            socket.emit('display_register', {
+                screen: screen
+            });
+        });
+
+        socket.on('display_registered', (data) => {
+            console.log('Display registered:', data);
+        });
+
+        function sendHeartbeat() {
+            if (!socket.connected) return;
+
+            socket.emit('display_heartbeat', {
+                screen: getPageName(),
+                current_media: currentMedia
+            });
+        }
+
+        setInterval(sendHeartbeat, 10000);
+
+        function clearTimer() {
+            if (slideTimer) {
+                clearTimeout(slideTimer);
+                slideTimer = null;
+            }
+        }
+
+        function getDisplayTime(file) {
+            const match = file.match(/^(\d+)-/);  // 30-openhouse.jpg -> 30
+            return match ? parseInt(match[1], 10) * 1000 : 10000; // default 30s
+        }
+
+        function showImage(file) {
+            clearTimer();
+            isVideoPlaying = false;
+
+            // Stop & hide video
+            vidEl.pause();
+            vidEl.removeAttribute('src');
+            vidEl.load();
+            vidEl.style.display = 'none';
+
+            // Show image
+            const page = getPageName();
+            const url = '/images/' + page + '/' + encodeURIComponent(file);
+            imgEl.src = url;
+            imgEl.style.display = 'block';
+            imgEl.style.opacity = '1';
+
+            const displayTime = getDisplayTime(file);
+            slideTimer = setTimeout(nextSlide, displayTime);
+        }
+
+        function showVideo(file) {
+            clearTimer();
+            isVideoPlaying = true;
+
+            // Hide image
+            imgEl.style.display = 'none';
+            imgEl.style.opacity = '0';
+
+            const page = getPageName();
+            const url = '/images/' + page + '/' + encodeURIComponent(file);
+
+            // Prepare video
+            vidEl.style.display = 'block';
+            vidEl.muted = true;        // IMPORTANT for autoplay on Pi
+            vidEl.autoplay = true;
+            vidEl.setAttribute('playsinline', '');
+            vidEl.controls = false;
+            vidEl.loop = false;
+            vidEl.src = url;
+            vidEl.load();
+
+            vidEl.onended = () => {
+                isVideoPlaying = false;
+                nextSlide();
+            };
+
+            vidEl.onloadedmetadata = () => {
+                if (!isNaN(vidEl.duration) && vidEl.duration > 0) {
+                    clearTimer();
+                    slideTimer = setTimeout(() => {
+                        if (isVideoPlaying) {
+                            isVideoPlaying = false;
+                            nextSlide();
+                        }
+                    }, (vidEl.duration * 1000) + 1000); // small buffer
+                }
+            };
+
+            const playPromise = vidEl.play();
+            if (playPromise && playPromise.catch) {
+                playPromise.catch(err => {
+                    console.warn('Video play failed, skipping to next slide:', err);
+                    isVideoPlaying = false;
+                    nextSlide();
+                });
+            }
+        }
+
+        function showSlide(index) {
+            if (!slides.length) return;
+
+            const file = slides[index];
+
+            currentMedia = file;
+            console.log("CURRENT MEDIA:", currentMedia);
+            sendHeartbeat();
+            const lower = file.toLowerCase();
+            const isVideo =
+                lower.endsWith('.mp4') ||
+                lower.endsWith('.webm') ||
+                lower.endsWith('.ogg');
+
+            if (isVideo) {
+                const video = document.createElement("video");
+                video.src = '/images/' + window.location.pathname.substring(1) + '/' + file;
+                video.controls = false;
+                video.autoplay = true;
+                video.muted = true;          // keep muted = much more reliable on Pi
+                video.preload = "auto";
+                video.playsInline = true;
+
+                video.style.maxWidth = "100%";
+                slideshow.appendChild(video);
+
+                isVideoPlaying = true;
+
+                // --- 1) Watchdog: if video never really starts, skip it ---
+                const fallbackMs = Math.max(displayTime, 8000); // at least 8s
+                let watchdog = setTimeout(() => {
+                    console.warn("Video watchdog timeout, skipping slide:", file);
+                    isVideoPlaying = false;
+                    nextSlide();
+                }, fallbackMs);
+
+                // --- 2) Error handlers: decode / network issues ---
+                video.onerror = (e) => {
+                    console.warn("Video error, skipping slide:", file, e);
+                    clearTimeout(watchdog);
+                    isVideoPlaying = false;
+                    nextSlide();
+                };
+
+                video.onstalled = (e) => {
+                    console.warn("Video stalled, skipping slide:", file, e);
+                    clearTimeout(watchdog);
+                    isVideoPlaying = false;
+                    nextSlide();
+                };
+
+                video.onabort = (e) => {
+                    console.warn("Video aborted, skipping slide:", file, e);
+                    clearTimeout(watchdog);
+                    isVideoPlaying = false;
+                    nextSlide();
+                };
+
+                // --- 3) Normal path: when metadata is loaded, schedule by duration ---
+                video.onloadedmetadata = function () {
+                    // If metadata loads, we trust duration more than filename prefix
+                    clearTimeout(watchdog);
+
+                    const durationMs =
+                        Number.isFinite(video.duration) && video.duration > 0
+                            ? video.duration * 1000
+                            : displayTime;
+
+                    setTimeout(() => {
+                        isVideoPlaying = false;
+                        nextSlide();
+                    }, durationMs + 500); // small safety buffer
+                };
+
+                // --- 4) Autoplay failure: skip if play() rejects even after mute ---
+                const playPromise = video.play();
+                if (playPromise && playPromise.catch) {
+                    playPromise.catch(err => {
+                        console.warn("Video play() failed, skipping slide:", file, err);
+                        clearTimeout(watchdog);
+                        isVideoPlaying = false;
+                        nextSlide();
+                    });
+                }
+            }
+            else {
+                showImage(file);
+            }
+        }
+
+        function nextSlide() {
+            if (isVideoPlaying) return;
+            if (!slides.length) return;
+
+            currentSlide = (currentSlide + 1) % slides.length;
+            showSlide(currentSlide);
+        }
+
+        function updateSlideshow(newFiles) {
+            clearTimer();
+            slides = newFiles || [];
+            currentSlide = 0;
+
+            if (slides.length > 0) {
+                showSlide(currentSlide);
+            } else {
+                currentMedia = null;
+                sendHeartbeat();
+
+                imgEl.style.display = 'none';
+                vidEl.style.display = 'none';
+            }
+        }
+
+        function fetchInitialFiles() {
+            const page = getPageName();
+            fetch('/api/images/' + page)
+                .then(response => response.json())
+                .then(data => updateSlideshow(data))
+                .catch(error => console.error('Error fetching images/videos:', error));
+        }
+
+        // Initial load
+        fetchInitialFiles();
+
+        // Updates from server
+        socket.on('update_images', (data) => {
+            console.log('Server updated images/videos');
+            updateSlideshow(data.images);
+        });
+
+        socket.on('message', function (data) {
+            console.log(data);
+        });
+
+        socket.on('refresh', function () {
+            location.reload();
+        });
+    </script>
+
+</body>
+
+</html>

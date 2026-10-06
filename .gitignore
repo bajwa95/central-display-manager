@@ -1,0 +1,27 @@
+# IDE settings
+.vscode/
+V!/
+static/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Logs / temporary files
+*.log
+*.tmp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets / environment
+.env
+*.env

@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Display Manager</title>
+
+    <link rel="stylesheet"
+          href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+
+    <style>
+        body {
+            background: #f4f6f8;
+            font-family: Arial, sans-serif;
+        }
+
+        .page-header {
+            margin-top: 40px;
+            margin-bottom: 30px;
+        }
+
+        .display-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            border-left: 6px solid #6c757d;
+            transition: 0.2s;
+        }
+
+        .display-card.online {
+            border-left-color: #28a745;
+        }
+
+        .display-card.stale {
+            border-left-color: #ffc107;
+        }
+
+        .display-card.offline {
+            border-left-color: #dc3545;
+        }
+
+        .display-name {
+            font-size: 22px;
+            font-weight: bold;
+        }
+
+        .status {
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+        .media-name {
+            font-family: Consolas, monospace;
+            word-break: break-all;
+        }
+
+        .last-seen {
+            color: #666;
+        }
+
+        .card-buttons {
+            margin-top: 15px;
+        }
+
+        .card-buttons button,
+        .card-buttons a {
+            margin-right: 6px;
+        }
+
+        .top-controls {
+            margin-bottom: 25px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <div class="page-header">
+        <h1>Display Manager</h1>
+        <p class="text-muted">
+            Live status of connected display screens
+        </p>
+    </div>
+
+
+    <div class="top-controls">
+
+        <a href="/"
+           class="btn btn-secondary">
+            ← Production Toolkit
+        </a>
+
+        <button class="btn btn-primary"
+                onclick="loadDisplayStatus()">
+            Refresh Status
+        </button>
+
+        <button class="btn btn-warning"
+                onclick="refreshAllDisplays()">
+            Refresh All Displays
+        </button>
+
+    </div>
+
+
+    <div class="row">
+
+        {% for folder in FOLDER_NAMES %}
+
+        <div class="col-md-6 col-lg-4">
+
+            <div class="display-card offline"
+                 id="card-{{ folder }}">
+
+                <div class="display-name">
+                    {{ folder }}
+                </div>
+
+                <div class="status"
+                     id="status-{{ folder }}">
+                    🔴 Offline
+                </div>
+
+                <hr>
+
+                <div>
+                    <strong>Current Media</strong>
+                </div>
+
+                <div class="media-name"
+                     id="media-{{ folder }}">
+                    —
+                </div>
+
+                <br>
+
+                <div class="last-seen"
+                     id="lastseen-{{ folder }}">
+                    Last seen: Never
+                </div>
+
+
+                <div class="card-buttons">
+
+                    <a href="/{{ folder }}"
+                       target="_blank"
+                       class="btn btn-sm btn-info">
+                        View
+                    </a>
+
+                    <button class="btn btn-sm btn-warning"
+                            onclick='refreshDisplay({{ folder|tojson }})'>
+                        Refresh
+                    </button>
+
+                </div>
+
+            </div>
+
+        </div>
+
+        {% endfor %}
+
+    </div>
+
+</div>
+
+
+<script>
+
+    const socket = io();
+
+
+    // =====================================================
+    // LOAD DISPLAY STATUS
+    // =====================================================
+
+    function loadDisplayStatus() {
+
+        fetch('/api/displays')
+
+            .then(response => response.json())
+
+            .then(data => {
+
+                Object.keys(data).forEach(screen => {
+
+                    updateDisplayCard(
+                        screen,
+                        data[screen]
+                    );
+
+                });
+
+            })
+
+            .catch(error => {
+
+                console.error(
+                    'Unable to load display status:',
+                    error
+                );
+
+            });
+    }
+
+
+    // =====================================================
+    // UPDATE INDIVIDUAL CARD
+    // =====================================================
+
+    function updateDisplayCard(screen, info) {
+
+        const card =
+            document.getElementById('card-' + screen);
+
+        const status =
+            document.getElementById('status-' + screen);
+
+        const media =
+            document.getElementById('media-' + screen);
+
+        const lastSeen =
+            document.getElementById('lastseen-' + screen);
+
+
+        if (!card) {
+            return;
+        }
+
+
+        card.classList.remove(
+            'online',
+            'stale',
+            'offline'
+        );
+
+
+        // -------------------------
+        // STATUS
+        // -------------------------
+
+        if (info.status === 'online') {
+
+            card.classList.add('online');
+
+            status.innerHTML =
+                '🟢 Online';
+
+        }
+
+        else if (info.status === 'stale') {
+
+            card.classList.add('stale');
+
+            status.innerHTML =
+                '🟡 Stale';
+
+        }
+
+        else {
+
+            card.classList.add('offline');
+
+            status.innerHTML =
+                '🔴 Offline';
+
+        }
+
+
+        // -------------------------
+        // CURRENT MEDIA
+        // -------------------------
+
+        if (info.current_media) {
+
+            media.textContent =
+                info.current_media;
+
+        }
+
+        else {
+
+            media.textContent = '—';
+
+        }
+
+
+        // -------------------------
+        // LAST SEEN
+        // -------------------------
+
+        if (info.last_seen_seconds === null) {
+
+            lastSeen.textContent =
+                'Last seen: Never';
+
+        }
+
+        else {
+
+            const seconds =
+                Math.round(info.last_seen_seconds);
+
+            if (seconds < 60) {
+
+                lastSeen.textContent =
+                    'Last seen: ' +
+                    seconds +
+                    ' sec ago';
+
+            }
+
+            else {
+
+                const minutes =
+                    Math.floor(seconds / 60);
+
+                lastSeen.textContent =
+                    'Last seen: ' +
+                    minutes +
+                    ' min ago';
+
+            }
+        }
+    }
+
+
+    // =====================================================
+    // REFRESH ONE DISPLAY
+    // =====================================================
+
+    function refreshDisplay(screen) {
+
+        console.log(
+            'Refreshing display:',
+            screen
+        );
+
+        socket.emit(
+            'refresh_display',
+            {
+                screen: screen
+            }
+        );
+    }
+
+
+    // =====================================================
+    // REFRESH ALL DISPLAYS
+    // =====================================================
+
+    function refreshAllDisplays() {
+
+        if (!confirm(
+            'Refresh all connected displays?'
+        )) {
+            return;
+        }
+
+
+        fetch('/Refresh')
+
+            .then(response => response.text())
+
+            .then(data => {
+
+                console.log(data);
+
+            })
+
+            .catch(error => {
+
+                console.error(
+                    'Refresh All failed:',
+                    error
+                );
+
+            });
+    }
+
+
+    // =====================================================
+    // SOCKET CONNECTION
+    // =====================================================
+
+    socket.on('connect', function () {
+
+        console.log(
+            'Display Manager connected'
+        );
+
+        loadDisplayStatus();
+
+    });
+
+
+    // =====================================================
+    // AUTOMATIC STATUS UPDATE
+    // =====================================================
+
+    setInterval(
+        loadDisplayStatus,
+        5000
+    );
+
+
+    // Initial load
+    loadDisplayStatus();
+
+</script>
+
+</body>
+</html>

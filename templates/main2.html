@@ -1,0 +1,127 @@
+<!-- home.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Software Hub</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet"
+          href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: #f4f6f8;
+            font-family: 'Arial', sans-serif;
+        }
+        .container {
+            margin-top: 100px;
+            text-align: center;
+        }
+        .btn-block {
+            margin-bottom: 20px;
+        }
+    </style>
+    
+</head>
+<body>
+
+
+<div class="container">
+    <h1 class="mb-5">Welcome to Production Toolkit</h1>
+    
+
+    <button class="btn btn-primary btn-lg btn-block" onclick="selectSubOption('scanning')">Live Scanning</button>
+    <button class="btn btn-success btn-lg btn-block" onclick="selectSubOption('status')">Status Search</button>
+    <button class="btn btn-warning btn-lg btn-block" onclick="selectSubOption('display')">Display Screens</button>
+    <button class="btn btn-dark btn-lg btn-block" onclick="downloadCSV()">Download CSV</button>
+</div>
+
+<script>
+    let selectedType = "";
+
+    function selectSubOption(type) {
+        selectedType = type;
+        
+        let route = "/";
+        if (type === 'scanning') {
+            const url = `http://${window.location.hostname}:5001`;
+            window.open(url, '_blank');
+            return;
+        } else if (type === 'status') {
+            const url = `http://${window.location.hostname}:5001/Find`;
+            window.open(url, '_blank');
+            return;
+        } else if (type === 'display') {
+                  // Show modal instead of prompt
+                  document.getElementById('subModal').classList.add('show');
+                  document.getElementById('subModal').style.display = 'block';
+                  document.body.classList.add('modal-open');
+
+              return;
+        }
+       
+    }
+
+    function downloadCSV() {
+        const url = `http://${window.location.hostname}:5001/djm`;
+            window.open(url, '_blank');
+    }
+
+
+function confirmSubOption() {
+    // Call /Refresh endpoint to trigger SocketIO emit
+    fetch('/Refresh')
+            .then(response => response.text())
+            .then(data => console.log(data))
+            .catch(error => console.error('Error calling /Refresh:', error));
+
+    const subOption = document.getElementById('subSelect').value;
+    if (subOption) {
+        window.location.href = `/${encodeURIComponent(subOption)}`;
+    } else {
+        window.location.href = route;
+    }
+}
+
+</script>
+
+
+
+<!-- Subcategory Modal -->
+<div class="modal fade" id="subModal" tabindex="-1" role="dialog" aria-labelledby="subModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Select Display</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <select name="folder" class="form-control" id="subSelect">>
+            {% for folder in FOLDER_NAMES %}
+                <option value="{{ folder }}">{{ folder }}</option>
+            {% endfor %}
+        </select>
+
+          
+        </div>
+        <div class="modal-footer">
+  <button type="button"
+          class="btn btn-success"
+          onclick="window.location.href='/displays'">
+      Manage Displays
+  </button>
+
+  <button type="button"
+          class="btn btn-primary"
+          onclick="confirmSubOption()">
+      Open Display
+  </button>
+</div>
+      </div>
+    </div>
+  </div>
+
+
+</body>
+</html>
